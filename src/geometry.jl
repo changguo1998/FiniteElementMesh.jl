@@ -11,24 +11,22 @@ function _triangle_norm_out(p1::Vector, p2::Vector, pref::Vector)
     return n
 end
 
-function triangle_norm_out(mesh::Mesh2D, mesha::Union{Nothing,Mesh2Daux}=nothing)
-    if isnothing(mesha)
-        mesha = auxillary_relation(mesh)
+function triangle_norm_out(mesh::Mesh2D, aux::Union{Nothing,Mesh2Daux}=nothing)
+    if isnothing(aux)
+        aux = auxillary_relation(mesh)
     end
-    Nface = nface(mesh)
-    buffer = zeros(2, 3, Nface)
-    for iface = axes(mesh.face2edge, 2)
-        verts = mesha.face2vert[:, iface]
-        for idl = axes(mesh.face2edge, 1)
-            edgeverts = mesh.edge2vert[:, mesh.face2edge[idl, iface]]
-            p1 = mesh.vertex[:, edgeverts[1]]
-            p2 = mesh.vertex[:, edgeverts[2]]
-            ip3 = setdiff(verts, edgeverts)[1]
-            p3 = mesh.vertex[:, ip3]
-            buffer[:, idl, iface] = _triangle_norm_out(p1, p2, p3)
+    buffer = zeros(2, 3, nface(mesh))
+    for f = axes(mesh.face2edge, 2)
+        facevert_list = aux.face2vert[:, f]
+        for el = axes(mesh.face2edge, 1)
+            edgevert_list = mesh.edge2vert[:, mesh.face2edge[el, f]]
+            p1 = mesh.vertex[:, edgevert_list[1]]
+            p2 = mesh.vertex[:, edgevert_list[2]]
+            p3 = mesh.vertex[:, first(setdiff(facevert_list, edgevert_list))]
+            buffer[:, el, f] = _triangle_norm_out(p1, p2, p3)
         end
     end
-    return Mesh2Ddata((:normv, :edge, :face), buffer)
+    return Mesh2Ddata((:normvec, :edge, :face), buffer)
 end
 
 function _tetra_norm_out(p1::Vector, p2::Vector, p3::Vector, pref::Vector)
@@ -42,23 +40,21 @@ function _tetra_norm_out(p1::Vector, p2::Vector, p3::Vector, pref::Vector)
     return n
 end
 
-function tetra_norm_out(mesh::Mesh3D, mesha::Union{Nothing,Mesh3Daux}=nothing)
-    if isnothing(mesha)
-        mesha = auxillary_relation(mesh)
+function tetra_norm_out(mesh::Mesh3D, aux::Union{Nothing,Mesh3Daux}=nothing)
+    if isnothing(aux)
+        aux = auxillary_relation(mesh)
     end
 
-    Ncell = ncell(mesh)
-    buffer = zeros(3, 4, Ncell)
-    for icell = axes(mesh.cell2face, 2)
-        vertexs = mesha.cell2vert[:, icell]
-        for ifl = axes(mesh.cell2face, 1)
-            vertexf = mesha.face2vert[:, mesh.cell2face[ifl, icell]]
-            p1 = mesh.vertex[:, vertexf[1]]
-            p2 = mesh.vertex[:, vertexf[2]]
-            p3 = mesh.vertex[:, vertexf[3]]
-            ip4 = first(setdiff(vertexs, vertexf))
-            p4 = mesh.vertex[:, ip4]
-            buffer[:, ifl, icell] = _tetra_norm_out(p1, p2, p3, p4)
+    buffer = zeros(3, 4, ncell(mesh))
+    for c = axes(mesh.cell2face, 2)
+        cellvert_list = aux.cell2vert[:, c]
+        for fl = axes(mesh.cell2face, 1)
+            facevert_list = aux.face2vert[:, mesh.cell2face[fl, c]]
+            p1 = mesh.vertex[:, facevert_list[1]]
+            p2 = mesh.vertex[:, facevert_list[2]]
+            p3 = mesh.vertex[:, facevert_list[3]]
+            p4 = mesh.vertex[:, first(setdiff(cellvert_list, facevert_list))]
+            buffer[:, fl, c] = _tetra_norm_out(p1, p2, p3, p4)
         end
     end
     return Mesh3Ddata((:normv, :face, :cell), buffer)

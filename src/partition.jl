@@ -1,62 +1,86 @@
-# To make differences of same data between part(new) mesh and total(old) mesh,
-# the variable is appended with suffix `_p` and `_t`
-# suffix `_p2t` and `_t2p` is also added to show the usage for index converting
-# suffix `_l`, `_g`, `_l2g` and `_g2l` is used to distinguish index in *same* mesh
+# See document Development.md for variable naming style
+# simplify:
+#   pI2tI -> I_p2t
+#   tI2pI -> I_t2p
+#   p_pIpJ2pK -> p_IJ2K
+#   p_pJpIl2pI -> p_J2I
+
 
 # TODO check and replace _l, _g suffix
-# TODO current progress:
+# TODO current progress: _partition_pJ2tJ_from_pI2tI
 
-function _partition_index_p2t_to_t2p(index_p2t::Vector{Int}, n_total::Int)
-    index_t2p = zeros(Int, n_total)
-    foreach(eachindex(index_p2t)) do ipart
-        itotal = index_p2t[ipart]
-        index_t2p[itotal] = ipart
+function _partition_It2p(I_p2t::Vector{Int}, t_ni::Int)
+    I_t2p = zeros(Int, t_ni)
+    foreach(eachindex(I_p2t)) do ipart
+        itotal = I_p2t[ipart]
+        I_t2p[itotal] = ipart
     end
-    return index_t2p
+    return I_t2p
 end
 
-function _partition_get_Xl2g_from_Yl2g(Y2X::Matrix{Int}, Ysub_l2g::Vector{Int}, nx_g::Int)
-    flagX_g = falses(nx_g)
-    for iy_g = Ysub_l2g
-        for ix_g = Y2X[:, iy_g]
-            flagX_g[ix_g] = true
+function _partition_Ip2t(t_J2I::Matrix{Int}, J_p2t::Vector{Int})
+    flag_tI = falses(maximum(t_J2I[:, J_p2t]))
+    for tj = J_p2t
+        for ti = t_J2I[:, tj]
+            flag_tI[ti] = true
         end
     end
-    return findall(flagX_g)
+    return findall(flag_tI)
 end
 
-function _partition_get_Yl2g_from_Xl2g(Y2X::Matrix{Int}, Xsub_l2g::Vector{Int})
-    flagmatch = map(ix -> ix in Xsub_l2g, Y2X)
-    flagY = all(flagmatch, dims=1) |> vec
-    return findall(flagY)
+function _partition_Jp2t(t_J2I::Matrix{Int}, I_p2t::Vector{Int})
+    flag_matched_tJ2I = map(ti -> ti in I_p2t, t_J2I)
+    flag_tJ = all(flag_matched_tJ2I, dims=1) |> vec
+    return findall(flag_tJ)
 end
 
-function _partition_get_local(Y2X_g::Matrix{Int}, X_g2l::Vector{Int}, Y_l2g::Vector{Int})
-    return X_g2l[Y2X_g[:, Y_l2g]]
+function _partition_p_J2I(t_J2I::Matrix{Int}, I_t2p::Vector{Int}, J_p2t::Vector{Int})
+    return I_t2p[t_J2I[:, J_p2t]]
 end
 
-function _partition_get_global(Y2X_l::Matrix{Int}, X_l2g::Vector{Int})
-    return X_l2g[Y2X_l]
+function _partition_t_pJ2tI(p_J2I::Matrix{Int}, I_p2t::Vector{Int})
+    return I_p2t[p_J2I]
 end
 
-const _APPROX_ZERO_THRESHOLD = 1e-5
-
-_partition_match_vec(vec1::Vector{Int}, vec2::Vector{Int}) = vec1 == vec2
-_partition_match_vec(vec1::Vector{Float64}, vec2::Vector{Float64}) = vec1 == vec2
-
-function _partition_match_vec_ignore_range(vec1::Vector{Int}, vec2::Vector{Int})
-    v1 = sort(vec1)
-    v2 = sort(vec2)
-    return v1 == v2
-end
-
-function _partition_match_col_idx(relation::Matrix{Int}, reference::Vector{Int})
+function _partition_colmatch(relation::Matrix{Int}, reference::Vector{Int})
+    v0 = sort(reference)
     for ic in axes(relation, 2)
-        if _partition_match_vec_ignore_range(relation[:, ic], reference)
+        v1 = sort(relation[:, ic])
+        if v0 == v1
             return ic
         end
     end
     return 0
+end
+
+function _partition_Jp2t(t_J2I::Matrix{Int}, pJ2tI::Matrix{Int})
+    return map(pj2tI -> _partition_colmatch(t_J2I, vec(pj2tI[:])), eachcol(pJ2tI))
+end
+
+const _APPROX_ZERO_THRESHOLD = 1e-5
+
+function _partition_pv2tv(p_vert2coor::Vector{Float64}, t_vert2coor::Vector{Float64})
+    return map(eachindex(p_vert2coor)) do pv
+        dist = map(tv -> abs(p_vert2coor[pv] - t_vert2coor[tv]), eachindex(t_vert2coor))
+        (vmin, imin) = findmin(dist)
+        if vmin < _APPROX_ZERO_THRESHOLD
+            return imin
+        else
+            return 0
+        end
+    end
+end
+
+function _partition_pv2tv(p_vert2coor::Matrix{Float64}, t_vert2coor::Matrix{Float64})
+    return map(axes(p_vert2coor, 2)) do pv
+        dist = map(tv -> norm(p_vert2coor[:, pv] - t_vert2coor[:, tv]), axes(t_vert2coor, 2))
+        (vmin, imin) = findmin(dist)
+        if vmin < _APPROX_ZERO_THRESHOLD
+            return imin
+        else
+            return 0
+        end
+    end
 end
 
 function _partition_index_array(arr::Array{<:Any}, idx::Tuple)
@@ -82,208 +106,168 @@ function _partition_index_array(arr::Array{<:Any}, idx::Tuple)
     return newdata
 end
 
-function _partition_vertex_l2g_from_coordinate(vertex_p::Vector{Float64}, vert_t::Vector{Float64})
-    return map(eachindex(vertex_p)) do ivert_p
-        dist = map(ivert_t->abs(vertex_p[ivert_p]-vert_t[ivert_t]), eachindex(vert_t))
-        (vmin, imin) = findmin(dist)
-        if vmin < _APPROX_ZERO_THRESHOLD
-            return imin
-        else
-            return 0
-        end
-    end
-end
-
-function _partition_vertex_l2g_from_coordinate(vertex_p::Matrix{Float64}, vert_t::Matrix{Float64})
-    return map(axes(vertex_p, 2)) do ivert_p
-        dist = map(ivert_t->norm(vertex_p[:, ivert_p]-vert_t[:, ivert_t]), axes(vert_t, 2))
-        (vmin, imin) = findmin(dist)
-        if vmin < _APPROX_ZERO_THRESHOLD
-            return imin
-        else
-            return 0
-        end
-    end
-end
-
-function _partition_get_l2g_from_index(part_Y2X_g::Matrix{Int}, Y2X_g::Matrix{Int})
-    return map(col_part_l->_partition_match_col_idx(Y2X_g, col_part_l), eachcol(part_Y2X_g))
-end
-
 #
 #
 #
 
 export submesh
 
-function submesh_v(mesh::Mesh1D, vertex_l2g::AbstractVector{<:Integer})
-    s_vertices = mesh.vertex[vertex_l2g]
+function submesh_v(tmesh::Mesh1D, vert_p2t::AbstractVector{<:Integer})
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
+    edge_p2t = _partition_Jp2t(tmesh.edge2vert, vert_p2t)
 
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    edge_l2g = _partition_get_Yl2g_from_Xl2g(mesh.edge2vert, vertex_l2g)
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-    return Mesh1D(s_vertices, s_edge2vert)
+    p_vert2coor = tmesh.vert2coor[vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    return Mesh1D(p_vert2coor, p_edge2vert)
 end
 
-function submesh_e(mesh::Mesh1D, edge_l2g::AbstractVector{<:Integer})
-    vertex_l2g = _partition_get_Xl2g_from_Yl2g(mesh.edge2vert, edge_l2g, nvertex(mesh))
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
+function submesh_e(tmesh::Mesh1D, edge_p2t::AbstractVector{<:Integer})
+    vert_p2t = _partition_Ip2t(tmesh.edge2vert, edge_p2t)
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
 
-    s_vertices = mesh.vertex[vertex_l2g]
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-    return Mesh1D(s_vertices, s_edge2vert)
+    p_vert2coor = tmesh.vert2coor[vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    return Mesh1D(p_vert2coor, p_edge2vert)
 end
 
-function submesh(mesh::Mesh1D, var::Symbol, l2g::AbstractVector{<:Integer})
+function submesh(tmesh::Mesh1D, var::Symbol, part2totl::AbstractVector{<:Integer})
     if var == :vertex
-        return submesh_v(mesh, l2g)
+        return submesh_v(tmesh, part2totl)
     elseif var == :edge
-        return submesh_e(mesh, l2g)
+        return submesh_e(tmesh, part2totl)
     else
         error("var: $(var) not supported, availables are: :vertex, :edge")
     end
 end
 
-function submesh_v(mesh::Mesh2D, vertex_l2g::AbstractVector{<:Integer})
-    s_vertices = mesh.vertex[:, vertex_l2g]
+function submesh_v(tmesh::Mesh2D, vert_p2t::AbstractVector{<:Integer})
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
+    edge_p2t = _partition_Jp2t(tmesh.edge2vert, vert_p2t)
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    face_p2t = _partition_Jp2t(tmesh.face2edge, edge_p2t)
 
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    edge_l2g = _partition_get_Yl2g_from_Xl2g(mesh.edge2vert, vertex_l2g)
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    face_l2g = _partition_get_Yl2g_from_Xl2g(mesh.face2edge, edge_l2g)
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
-    return Mesh2D(s_vertices, s_edge2vert, s_face2edge)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    return Mesh2D(p_vert2coor, p_edge2vert, p_face2edge)
 end
 
-function submesh_e(mesh::Mesh2D, edge_l2g::AbstractVector{<:Integer})
-    face_l2g = _partition_get_Yl2g_from_Xl2g(mesh.face2edge, edge_l2g)
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
+function submesh_e(tmesh::Mesh2D, edge_p2t::AbstractVector{<:Integer})
+    vert_p2t = _partition_Ip2t(tmesh.edge2vert, edge_p2t)
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    face_p2t = _partition_Jp2t(tmesh.face2edge, edge_p2t)
 
-    vertex_l2g = _partition_get_Xl2g_from_Yl2g(mesh.edge2vert, edge_l2g, nvertex(mesh))
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    s_vertices = mesh.vertex[:, vertex_l2g]
-    return Mesh2D(s_vertices, s_edge2vert, s_face2edge)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    return Mesh2D(p_vert2coor, p_edge2vert, p_face2edge)
 end
 
-function submesh_f(mesh::Mesh2D, face_l2g::AbstractVector{<:Integer})
-    edge_l2g = _partition_get_Xl2g_from_Yl2g(mesh.face2edge, face_l2g, nedge(mesh))
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
+function submesh_f(tmesh::Mesh2D, face_p2t::AbstractVector{<:Integer})
+    edge_p2t = _partition_Ip2t(tmesh.face2edge, face_p2t)
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    vert_p2t = _partition_Ip2t(tmesh.edge2vert, edge_p2t)
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
 
-    vertex_l2g = _partition_get_Xl2g_from_Yl2g(mesh.edge2vert, edge_l2g, nvertex(mesh))
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    s_vertices = mesh.vertex[:, vertex_l2g]
-    return Mesh2D(s_vertices, s_edge2vert, s_face2edge)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    return Mesh2D(p_vert2coor, p_edge2vert, p_face2edge)
 end
 
-function submesh(mesh::Mesh2D, var::Symbol, l2g::AbstractVector{<:Integer})
+function submesh(tmesh::Mesh2D, var::Symbol, part2totl::AbstractVector{<:Integer})
     if var == :vertex
-        return submesh_v(mesh, l2g)
+        return submesh_v(tmesh, part2totl)
     elseif var == :edge
-        return submesh_e(mesh, l2g)
+        return submesh_e(tmesh, part2totl)
     elseif var == :face
-        return submesh_f(mesh, l2g)
+        return submesh_f(tmesh, part2totl)
     else
         error("var: $(var) not supported, availables are: :vertex, :edge, :face")
     end
 end
 
-function submesh_v(mesh::Mesh3D, vertex_l2g::AbstractVector{<:Integer})
-    s_vertices = mesh.vertex[:, vertex_l2g]
+function submesh_v(tmesh::Mesh3D, vert_p2t::AbstractVector{<:Integer})
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
+    edge_p2t = _partition_Jp2t(tmesh.edge2vert, vert_p2t)
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    face_p2t = _partition_Jp2t(tmesh.face2edge, edge_p2t)
+    face_t2p = _partition_It2p(face_p2t, nface(tmesh))
+    cell_p2t = _partition_Jp2t(tmesh.cell2face, face_p2t)
 
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    edge_l2g = _partition_get_Yl2g_from_Xl2g(mesh.edge2vert, vertex_l2g)
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    face_l2g = _partition_get_Yl2g_from_Xl2g(mesh.face2edge, edge_l2g)
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
-
-    face_g2l = _partition_index_p2t_to_t2p(face_l2g, nface(mesh))
-    cell_l2g = _partition_get_Yl2g_from_Xl2g(mesh.cell2face, face_l2g)
-    s_cell2face = _partition_get_local(mesh.cell2face, face_g2l, cell_l2g)
-
-    return Mesh3D(s_vertices, s_edge2vert, s_face2edge, s_cell2face)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    p_cell2face = _partition_p_J2I(tmesh.cell2face, face_t2p, cell_p2t)
+    return Mesh3D(p_vert2coor, p_edge2vert, p_face2edge, p_cell2face)
 end
 
-function submesh_e(mesh::Mesh3D, edge_l2g::AbstractVector{<:Integer})
-    face_l2g = _partition_get_Yl2g_from_Xl2g(mesh.face2edge, edge_l2g)
-    face_g2l = _partition_index_p2t_to_t2p(face_l2g, nface(mesh))
-    cell_l2g = _partition_get_Yl2g_from_Xl2g(mesh.cell2face, face_l2g)
-    s_cell2face = _partition_get_local(mesh.cell2face, face_g2l, cell_l2g)
+function submesh_e(tmesh::Mesh3D, edge_p2t::AbstractVector{<:Integer})
+    vert_p2t = _partition_Ip2t(mesh.edge2vert, edge_p2t)
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    face_p2t = _partition_Jp2t(tmesh.face2edge, edge_p2t)
+    face_t2p = _partition_It2p(face_p2t, nface(tmesh))
+    cell_p2t = _partition_Jp2t(tmesh.cell2face, face_p2t)
 
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
-
-    vertex_l2g = _partition_get_Xl2g_from_Yl2g(mesh.edge2vert, edge_l2g, nvertex(mesh))
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    s_vertices = mesh.vertex[:, vertex_l2g]
-    return Mesh3D(s_vertices, s_edge2vert, s_face2edge, s_cell2face)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    p_cell2face = _partition_p_J2I(tmesh.cell2face, face_t2p, cell_p2t)
+    return Mesh3D(p_vert2coor, p_edge2vert, p_face2edge, p_cell2face)
 end
 
-function submesh_f(mesh::Mesh3D, face_l2g::AbstractVector{<:Integer})
-    cell_l2g = _partition_get_Yl2g_from_Xl2g(mesh.cell2face, face_l2g)
-    face_g2l = _partition_index_p2t_to_t2p(face_l2g, nface(mesh))
-    s_cell2face = _partition_get_local(mesh.cell2face, face_g2l, cell_l2g)
+function submesh_f(tmesh::Mesh3D, face_p2t::AbstractVector{<:Integer})
+    edge_p2t = _partition_Ip2t(tmesh.face2edge, face_p2t)
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    vert_p2t = _partition_Ip2t(tmesh.edge2vert, edge_p2t)
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
+    face_t2p = _partition_It2p(face_p2t, nface(tmesh))
+    cell_p2t = _partition_Jp2t(tmesh.cell2face, face_p2t)
 
-    edge_l2g = _partition_get_Xl2g_from_Yl2g(mesh.face2edge, face_l2g, nedge(mesh))
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
-
-    vertex_l2g = _partition_get_Xl2g_from_Yl2g(mesh.edge2vert, edge_l2g, nvertex(mesh))
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    s_vertices = mesh.vertex[:, vertex_l2g]
-    return Mesh3D(s_vertices, s_edge2vert, s_face2edge, s_cell2face)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    p_cell2face = _partition_p_J2I(tmesh.cell2face, face_t2p, cell_p2t)
+    return Mesh3D(p_vert2coor, p_edge2vert, p_face2edge, p_cell2face)
 end
 
-function submesh_c(mesh::Mesh3D, cell_l2g::AbstractVector{<:Integer})
-    face_l2g = _partition_get_Xl2g_from_Yl2g(mesh.cell2face, cell_l2g, nface(mesh))
-    face_g2l = _partition_index_p2t_to_t2p(face_l2g, nface(mesh))
-    s_cell2face = _partition_get_local(mesh.cell2face, face_g2l, cell_l2g)
+function submesh_c(tmesh::Mesh3D, cell_p2t::AbstractVector{<:Integer})
+    face_p2t = _partition_Ip2t(tmesh.cell2face, cell_p2t)
+    face_t2p = _partition_It2p(face_p2t, nface(tmesh))
+    edge_p2t = _partition_Ip2t(tmesh.face2edge, face_p2t)
+    edge_t2p = _partition_It2p(edge_p2t, nedge(tmesh))
+    vert_p2t = _partition_Ip2t(tmesh.edge2vert, edge_p2t)
+    vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
 
-    edge_l2g = _partition_get_Xl2g_from_Yl2g(mesh.face2edge, face_l2g, nedge(mesh))
-    edge_g2l = _partition_index_p2t_to_t2p(edge_l2g, nedge(mesh))
-    s_face2edge = _partition_get_local(mesh.face2edge, edge_g2l, face_l2g)
-
-    vertex_l2g = _partition_get_Xl2g_from_Yl2g(mesh.edge2vert, edge_l2g, nvertex(mesh))
-    vertex_g2l = _partition_index_p2t_to_t2p(vertex_l2g, nvertex(mesh))
-    s_edge2vert = _partition_get_local(mesh.edge2vert, vertex_g2l, edge_l2g)
-
-    s_vertices = mesh.vertex[:, vertex_l2g]
-    return Mesh3D(s_vertices, s_edge2vert, s_face2edge, s_cell2face)
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
+    p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
+    p_face2edge = _partition_p_J2I(tmesh.face2edge, edge_t2p, face_p2t)
+    p_cell2face = _partition_p_J2I(tmesh.cell2face, face_t2p, cell_p2t)
+    return Mesh3D(p_vert2coor, p_edge2vert, p_face2edge, p_cell2face)
 end
 
-function submesh(mesh::Mesh3D, var::Symbol, l2g::AbstractVector{<:Integer})
+function submesh(tmesh::Mesh3D, var::Symbol, part2totl::AbstractVector{<:Integer})
     if var == :vertex
-        return submesh_v(mesh, l2g)
+        return submesh_v(tmesh, part2totl)
     elseif var == :edge
-        return submesh_e(mesh, l2g)
+        return submesh_e(tmesh, part2totl)
     elseif var == :face
-        return submesh_f(mesh, l2g)
+        return submesh_f(tmesh, part2totl)
     elseif var == :cell
-        return submesh_c(mesh, l2g)
+        return submesh_c(tmesh, part2totl)
     else
         error("var: $(var) not supported, availables are: :vertex, :edge, :face, :cell")
     end
 end
 
-function submesh(mesh::FEMesh; ks...)
+function submesh(tmesh::FEMesh; ks...)
     if length(ks) > 1
         error("too many keyword parameters")
     end
     k = keys(ks)[1]
-    return submesh(mesh, k, ks[k])
+    return submesh(tmesh, k, ks[k])
 end
 
 #
@@ -292,16 +276,16 @@ end
 
 export submeshdata
 
-function submeshdata(mesh_part::Mesh1D, mesh_total::Mesh1D, data_total::Mesh1Ddata)
-    vert_p2t = _partition_vertex_l2g_from_coordinate(mesh_part.vertex, mesh_total.vertex)
+function submeshdata(pmesh::Mesh1D, tmesh::Mesh1D, t_data::Mesh1Ddata)
+    vert_p2t = _partition_pv2tv(pmesh.vert2coor, tmesh.vert2coor)
     if any(iszero, vert_p2t) || isempty(vert_p2t)
         error("any(iszero, vert_l2g)")
     end
 
-    part_edge2vert_g = _partition_get_global(mesh_part.edge2vert, vert_p2t)
-    edge_p2t = _partition_get_l2g_from_index(part_edge2vert_g, mesh_total.edge2vert)
+    pedge2tvert = _partition_t_pJ2tI(pmesh.edge2vert, vert_p2t)
+    edge_p2t = _partition_Jp2t(tmesh.edge2vert, pedge2tvert)
 
-    dataidx = map(size(data_total.data), data_total.dimName) do n, k
+    dataidx = map(size(t_data.data), t_data.dimName) do n, k
         if k == :vertex
             return vert_p2t
         elseif k == :edge
@@ -311,25 +295,22 @@ function submeshdata(mesh_part::Mesh1D, mesh_total::Mesh1D, data_total::Mesh1Dda
         end
     end |> Tuple
     @info dataidx
-    ndata = _partition_index_array(data_total.data, dataidx)
+    ndata = _partition_index_array(t_data.data, dataidx)
 
-    return Mesh1Ddata(data_total.dimName, ndata)
+    return Mesh1Ddata(t_data.dimName, ndata)
 end
 
-function submeshdata(mesh_part::Mesh2D, mesh_total::Mesh2D, data_total::Mesh2Ddata)
-    vert_p2t = _partition_vertex_l2g_from_coordinate(mesh_part.vertex, mesh_total.vertex)
-    if any(iszero, vert_l2g)
+function submeshdata(pmesh::Mesh2D, tmesh::Mesh2D, t_data::Mesh2Ddata)
+    vert_p2t = _partition_pv2tv(pmesh.vertex, tmesh.vertex)
+    if any(iszero, vert_l2g) || isempty(vert_p2t)
         error("any(iszero, vert_l2g)")
     end
+    pedge2tvert = _partition_t_pJ2tI(pmesh.edge2vert, vert_p2t)
+    edge_p2t = _partition_Jp2t(tmesh.edge2vert, pedge2tvert)
+    pface2tedge = _partition_t_pJ2tI(pmesh.face2edge, edge_p2t)
+    face_p2t = _partition_Jp2t(tmesh.face2edge, pface2tedge)
 
-    part_edge2vert_g = _partition_get_global(mesh_part.edge2vert, vert_p2t)
-    edge_p2t = _partition_get_l2g_from_index(part_edge2vert_g, mesh_total.edge2vert)
-
-    part_face2edge_g = _partition_get_global(mesh_part.face2edge, edge_p2t)
-    face_p2t = _partition_get_l2g_from_index(part_face2edge_g, mesh_total.face2edge)
-
-
-    dataidx = map(size(data_total.data), data_total.dimName) do n, k
+    dataidx = map(size(t_data.data), t_data.dimName) do n, k
         if k == :vertex
             return vert_p2t
         elseif k == :edge
@@ -341,28 +322,24 @@ function submeshdata(mesh_part::Mesh2D, mesh_total::Mesh2D, data_total::Mesh2Dda
         end
     end |> Tuple
     @info dataidx
-    ndata = _partition_index_array(data_total.data, dataidx)
+    ndata = _partition_index_array(t_data.data, dataidx)
 
-    return Mesh2Ddata(data_total.dimName, ndata)
+    return Mesh2Ddata(t_data.dimName, ndata)
 end
 
-function submeshdata(mesh_part::Mesh3D, mesh_total::Mesh3D, data_total::Mesh3Ddata)
-    error("this function is being developed")
-    vert_p2t = _partition_vertex_l2g_from_coordinate(mesh_part.vertex, mesh_total.vertex)
-    if any(iszero, vert_l2g)
+function submeshdata(pmesh::Mesh3D, tmesh::Mesh3D, t_data::Mesh3Ddata)
+    vert_p2t = _partition_pv2tv(pmesh.vertex, tmesh.vertex)
+    if any(iszero, vert_l2g) || isempty(vert_p2t)
         error("any(iszero, vert_l2g)")
     end
+    pedge2tvert = _partition_t_pJ2tI(pmesh.edge2vert, vert_p2t)
+    edge_p2t = _partition_Jp2t(tmesh.edge2vert, pedge2tvert)
+    pface2tedge = _partition_t_pJ2tI(pmesh.face2edge, edge_p2t)
+    face_p2t = _partition_Jp2t(tmesh.face2edge, pface2tedge)
+    pcell2tface = _partition_t_pJ2tI(pmesh.cell2face, face_p2t)
+    cell_p2t = _partition_Jp2t(tmesh.cell2face, pcell2tface)
 
-    part_edge2vert_g = _partition_get_global(mesh_part.edge2vert, vert_p2t)
-    edge_p2t = _partition_get_l2g_from_index(part_edge2vert_g, mesh_total.edge2vert)
-
-    part_face2edge_g = _partition_get_global(mesh_part.face2edge, edge_p2t)
-    face_p2t = _partition_get_l2g_from_index(part_face2edge_g, mesh_total.face2edge)
-
-    part_cell2face_g = _partition_get_global(mesh_part.cell2face, face_p2t)
-    cell_p2t = _partition_get_l2g_from_index(part_cell2face_g, mesh_total.cell2face)
-
-    dataidx = map(size(data_total.data), data_total.dimName) do n, k
+    dataidx = map(size(t_data.data), t_data.dimName) do n, k
         if k == :vertex
             return vert_p2t
         elseif k == :edge
@@ -376,7 +353,7 @@ function submeshdata(mesh_part::Mesh3D, mesh_total::Mesh3D, data_total::Mesh3Dda
         end
     end |> Tuple
     @info dataidx
-    ndata = _partition_index_array(data_total.data, dataidx)
+    ndata = _partition_index_array(t_data.data, dataidx)
 
-    return Mesh3Ddata(data_total.dimName, ndata)
+    return Mesh3Ddata(t_data.dimName, ndata)
 end
