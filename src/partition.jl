@@ -5,10 +5,6 @@
 #   p_pIpJ2pK -> p_IJ2K
 #   p_pJpIl2pI -> p_J2I
 
-
-# TODO check and replace _l, _g suffix
-# TODO current progress: _partition_pJ2tJ_from_pI2tI
-
 function _partition_It2p(I_p2t::Vector{Int}, t_ni::Int)
     I_t2p = zeros(Int, t_ni)
     foreach(eachindex(I_p2t)) do ipart
@@ -112,11 +108,18 @@ end
 
 export submesh
 
+"""
+```julia
+submesh(tmesh::FEMesh, var::Symbol, part2totl::AbstractVector{<:Integer}) -> FEMesh
+```
+"""
+function submesh end
+
 function submesh_v(tmesh::Mesh1D, vert_p2t::AbstractVector{<:Integer})
     vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
     edge_p2t = _partition_Jp2t(tmesh.edge2vert, vert_p2t)
 
-    p_vert2coor = tmesh.vert2coor[vert_p2t]
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
     p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
     return Mesh1D(p_vert2coor, p_edge2vert)
 end
@@ -125,7 +128,7 @@ function submesh_e(tmesh::Mesh1D, edge_p2t::AbstractVector{<:Integer})
     vert_p2t = _partition_Ip2t(tmesh.edge2vert, edge_p2t)
     vert_t2p = _partition_It2p(vert_p2t, nvertex(tmesh))
 
-    p_vert2coor = tmesh.vert2coor[vert_p2t]
+    p_vert2coor = tmesh.vert2coor[:, vert_p2t]
     p_edge2vert = _partition_p_J2I(tmesh.edge2vert, vert_t2p, edge_p2t)
     return Mesh1D(p_vert2coor, p_edge2vert)
 end
@@ -262,6 +265,11 @@ function submesh(tmesh::Mesh3D, var::Symbol, part2totl::AbstractVector{<:Integer
     end
 end
 
+"""
+```julia
+submesh(tmesh::FEMesh; vertex/edge/face/cell) -> FEMesh
+```
+"""
 function submesh(tmesh::FEMesh; ks...)
     if length(ks) > 1
         error("too many keyword parameters")
@@ -275,6 +283,13 @@ end
 #
 
 export submeshdata
+
+"""
+```julia
+submeshdata(partmesh::FEMesh, totalmesh::FEMesh, t_data::Meshdata) -> Meshdata
+```
+"""
+function submeshdata end
 
 function submeshdata(pmesh::Mesh1D, tmesh::Mesh1D, t_data::Mesh1Ddata)
     vert_p2t = _partition_pv2tv(pmesh.vert2coor, tmesh.vert2coor)

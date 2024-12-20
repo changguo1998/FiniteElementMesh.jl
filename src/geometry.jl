@@ -11,6 +11,11 @@ function _triangle_norm_out(p1::Vector, p2::Vector, pref::Vector)
     return n
 end
 
+"""
+```julia
+triangle_norm_out(mesh::Mesh2D [, aux::Mesh2Daux]) -> Mesh2Ddata(:normvec, :edge)
+```
+"""
 function triangle_norm_out(mesh::Mesh2D, aux::Union{Nothing,Mesh2Daux}=nothing)
     if isnothing(aux)
         aux = auxillary_relation(mesh)
@@ -40,6 +45,11 @@ function _tetra_norm_out(p1::Vector, p2::Vector, p3::Vector, pref::Vector)
     return n
 end
 
+"""
+```julia
+tetra_norm_out(mesh::Mesh3D [, aux::Mesh3Daux]) -> Mesh3Ddata(:normvec, :face, :cell)
+```
+"""
 function tetra_norm_out(mesh::Mesh3D, aux::Union{Nothing,Mesh3Daux}=nothing)
     if isnothing(aux)
         aux = auxillary_relation(mesh)
